@@ -1,0 +1,42 @@
+# Node.js und npm spezifische Dateien
+
+# Abhängigkeiten
+# Dies ist der wichtigste Eintrag: ignoriert das Verzeichnis mit den installierten Paketen
+/node_modules
+session-data
+.wwebjs_cache
+.wwebjs_auth
+logs
+# Lokaler Node.js-Knoten-Cache
+.npm
+
+# Logs
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build- und Kompilierungs-Artefakte
+/dist
+/build
+/temp
+/out
+
+# Umgebungsvariablen und Konfiguration
+# Sensible Daten sollten niemals im Repository sein!
+.env
+.env.local
+.env.*.local
+
+# Betriebssystem und IDE Dateien
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Entwicklungsumgebungen (Optional)
+# Visual Studio Code
+.vscode/
+
+# IntelliJ / WebStorm / andere JetBrains IDEs
+.idea/
