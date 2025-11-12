@@ -39,18 +39,6 @@ function getNumberFromPercent(raw) {
 /**
  * Liefert den passenden WhatsApp-Badge basierend auf Rabattstufen (Logik aus offer_message.py).
  */
-function getBadge(discountPercent) {
-  const pct = getNumberFromPercent(discountPercent) || 0.0;
-
-  if (pct >= 50) {
-    return "🚨 *PREISSTURZ DES JAHRES!* 🚨"; // Höchste Dringlichkeit
-  } else if (pct >= 35) {
-    return "🔥 *TOP-DEAL DES TAGES!*"; // Hohe Dringlichkeit
-  } else if (pct >= 20) {
-    return "✨ *Gutes Angebot entdeckt!*"; // Mittlere Dringlichkeit
-  }
-  return "💡 *Interessantes Angebot!*"; // Standard-Präfix
-}
 
 // ----------------------------------------------------
 // II. Hauptfunktion: createOfferMessage
@@ -60,12 +48,11 @@ function createOfferMessage(data, localImagePath) {
   // Daten extrahieren und vorbereiten
   const title = data?.title || "Unbekanntes Produkt";
   const price = data?.price?.raw || data?.price || null;
-  const originalPrice =
-    data?.original_price?.raw || data?.original_price || null;
+  const originalPrice = data?.original_price?.raw || data?.original_price || null;
   const discount = data?.discount_percent || null;
   const market = data?.market || data?.seller || null;
   const brand = data?.brand || null;
-  const couponMore = data?.coupon?.more;
+  const couponMore = data?.rabatt_text;
   const couponCode = data?.coupon?.code;
   const status = data?.status || "Verfügbar";
   const url = data.affiliate_url; // AFFILIATE URL WIRD WIEDER VERWENDET!
@@ -80,29 +67,39 @@ function createOfferMessage(data, localImagePath) {
     return `${emoji} *${label}:* ${mdEscape(value)}\n`;
   };
 
-  // --- 1. Titel & Intro-Block (Dynamischer Badge) ---
-  const badge = getBadge(discount);
   // Hier wird KEIN mdEscape auf den Titel angewendet, da er in der Template-Syntax
   // oft als Variable übergeben wird (z.B. {{1}}), oder weil wir hier das Fett-Design wollen.
-  const intro = `*${title}*\n${badge}\n`;
+  const intro = `*${title}\n`;
 
   // --- 2. Preis- & Coupon-Block (Psychologischer Fokus) ---
   let priceBlock = "";
 
-  // Preis-Highlights
-  if (!isNA(price)) {
-    priceBlock += `\n💶 *HIGHLIGHTS: JETZT NUR*\n`;
-    // Preisdaten werden escaped, falls sie Sonderzeichen enthalten
-    priceBlock += `*💥 DEAL-PREIS:* ${mdEscape(price)}\n`;
-  }
+  if (!isNA(couponMore)) {
+    // Wenn die Aktion existiert, wird sie als eigene Zeile/Block priorisiert
 
-  // Rabatt & Originalpreis
-  if (!isNA(discount)) {
-    priceBlock += `*⬇️ Deine Ersparnis:* _${mdEscape(discount)}_\n`;
+    priceBlock += `${couponMore}\n`;
   }
-  if (!isNA(originalPrice)) {
-    // Hier wird die Tilde ~ für Durchgestrichen NICHT escaped
-    priceBlock += `   ~Regulärer Preis: ${mdEscape(originalPrice)}~\n`;
+  if (!isNA(price) || !isNA(originalPrice) || !isNA(discount)) {
+    let parts = [];
+
+    // 1. Deal-Preis (immer mit Icon und Fettschrift)
+    if (!isNA(price)) {
+      parts.push(`💶*${mdEscape(price)}*`);
+    }
+
+    // 2. Originalpreis (durchgestrichen)
+    if (!isNA(originalPrice)) {
+      // WICHTIG: Tilde ~ wird nicht escaped
+      parts.push(`~${mdEscape(originalPrice)}~`);
+    }
+
+    // 3. Rabatt
+    if (!isNA(discount)) {
+      parts.push(`${mdEscape(discount)}`);
+    }
+
+    // Fassen Sie die Teile mit zwei Leerzeichen zusammen, um den Abstand zu erhöhen
+    priceBlock += parts.join("  ");
   }
 
   // Coupon-Details (Monospace für Code)
@@ -110,16 +107,6 @@ function createOfferMessage(data, localImagePath) {
     // Monospace-Ticks ` werden hier um den Code selbst platziert
     priceBlock += `\n🏷️ *Wichtig:* \`${mdEscape(couponCode)}\` (Code)\n`;
   }
-  if (!isNA(couponMore)) {
-    priceBlock += `    *Aktion:* ${mdEscape(couponMore)}\n`;
-  }
-
-  // --- 3. Allgemeine Details (Sekundäre Infos) ---
-  const detailLines = [
-    formatDetailLine("Marke", brand, "👑"), // Krone für Marke/Qualität
-    formatDetailLine("Händler", market, "🛍️"), // Einkaufstasche für Shop
-    formatDetailLine("Status", status, "✅"), // Status anzeigen
-  ].join("");
 
   // --- 4. CTA Hinweis (Der Link kommt in den Button) ---
   let ctaBlock = "";

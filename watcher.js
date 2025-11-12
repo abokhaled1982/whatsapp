@@ -7,7 +7,7 @@ const path = require('path');
 const axios = require('axios');
 
 // --- KONFIGURATION ---
-const WATCH_FOLDER = 'C:\\Users\\walgh\\Desktop\\scraper\\data\\out'; 
+const WATCH_FOLDER = 'C:\\Users\\admin\\Desktop\\scraper\\data\\out'; 
 const SENT_FILE_PATH = path.join(__dirname, 'sent.json');
 const IMAGE_DOWNLOAD_FOLDER = path.join(__dirname, 'images');
 
