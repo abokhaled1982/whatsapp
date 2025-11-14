@@ -21,8 +21,9 @@ const {
 } = require('./watcher'); 
 
 // --- WHATSAPP KONFIGURATION aus .env / index.js übernommen ---
-const SESSION_PATH = process.env.SESSION_PATH || "C:/Users/walgh/Desktop/wwebjs-sender/session-data";
+const SESSION_PATH = process.env.SESSION_PATH || "./session-data"; 
 const CLIENT_ID = process.env.CLIENT_ID || "sport-bot-1";
+
 const RECIPIENT = process.env.RECIPIENT || ""; // 4917...
 const GROUP_NAME = process.env.GROUP_NAME || "Test"; // "Meine Sport Community"
 

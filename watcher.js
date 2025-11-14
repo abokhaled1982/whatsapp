@@ -5,12 +5,16 @@ const fsp = require('fs/promises');
 const fs = require('fs'); 
 const path = require('path');
 const axios = require('axios');
+const os = require('os'); // <<< HINZUGEFÜGT
 
 // --- KONFIGURATION ---
-const WATCH_FOLDER = 'C:\\Users\\admin\\Desktop\\scraper\\data\\out'; 
+// *Dynamischer Pfad zum Watch Folder*
+// Nutzt os.homedir() für Plattformunabhängigkeit (Linux, Windows, macOS)
+const HOME_DIR = os.homedir(); 
+// Der Pfad ist nun: <Home-Verzeichnis>/Desktop/scraper/data/out
+const WATCH_FOLDER = path.join(HOME_DIR, 'Desktop', 'scraper', 'data', 'out'); // <<< KORRIGIERT & DYNAMISCH
 const SENT_FILE_PATH = path.join(__dirname, 'sent.json');
 const IMAGE_DOWNLOAD_FOLDER = path.join(__dirname, 'images');
-
 // --- WICHTIG: User-Agent-Header zur Simulation eines Browsers ---
 const DOWNLOAD_HEADERS = {
     // Standard-User-Agent eines modernen Chrome-Browsers
