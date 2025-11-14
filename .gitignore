@@ -20,6 +20,7 @@ yarn-error.log*
 /build
 /temp
 /out
+/images
 
 # Umgebungsvariablen und Konfiguration
 # Sensible Daten sollten niemals im Repository sein!
