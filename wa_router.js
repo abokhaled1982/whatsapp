@@ -8,7 +8,7 @@ const qrcode = require("qrcode-terminal");
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 
 const { createOfferMessage } = require("./offer_message");
-const { ensureWhatsappWidth } = require("./image_padding");
+
 const { startWatcher, downloadImage, getSentDeals, addSentDeal, ensureImageFolderExists, WATCH_FOLDER, IMAGE_DOWNLOAD_FOLDER, SENT_FILE_PATH } = require("./watcher");
 
 // =============================
@@ -185,24 +185,20 @@ async function routeNewOffer(fullPath) {
       return;
     }
 
+    // 1. Bild herunterladen
     localImagePath = await downloadImage(imageUrl, productId);
     if (!localImagePath) {
       log("❌ Bild-Download fehlgeschlagen.");
       return;
     }
 
-    try {
-      const padded = await ensureWhatsappWidth(localImagePath, {
-        background: { r: 255, g: 255, b: 255, alpha: 1 },
-      });
-      if (padded !== localImagePath) {
-        await fs.unlink(localImagePath).catch(() => {});
-        localImagePath = padded;
-      }
-    } catch {
-      log("⚠️ Padding fehlgeschlagen – Originalbild wird gesendet.");
-    }
+    // ----------------------------------------------------
+    // 🗑️ Entfernter Block:
+    // Der gesamte try/catch-Block für das Padding wurde entfernt.
+    // Das Bild wird nun unverändert gesendet.
+    // ----------------------------------------------------
 
+    // 2. Bild unverändert senden
     await sendImageWithCaption(localImagePath, createOfferMessage(data).trim());
     await addSentDeal(productId);
   } catch (err) {
