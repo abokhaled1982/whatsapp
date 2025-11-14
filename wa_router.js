@@ -1,301 +1,227 @@
 // wa_router.js - Der Haupt-Controller mit WhatsApp-Integration
 
-require("dotenv").config(); // Konfig aus .env laden
-const fs = require('fs/promises');
-const fsn = require('fs'); // Für synchronous file checks
-const path = require('path');
-const qrcode = require("qrcode-terminal"); // Für QR-Code Anzeige
-const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js"); // WhatsApp Client
+require("dotenv").config();
+const fs = require("fs/promises");
+const fsn = require("fs");
+const path = require("path");
+const qrcode = require("qrcode-terminal");
+const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 
-// Importiere Logik von den Modulen
-const { createOfferMessage } = require('./offer_message');
-const { ensureWhatsappWidth } = require('./image_padding'); 
-const { 
-    startWatcher, 
-    downloadImage, 
-    getSentDeals, 
-    addSentDeal, 
-    ensureImageFolderExists,
-    WATCH_FOLDER,
-    IMAGE_DOWNLOAD_FOLDER,
-    SENT_FILE_PATH
-} = require('./watcher'); 
+const { createOfferMessage } = require("./offer_message");
+const { ensureWhatsappWidth } = require("./image_padding");
+const { startWatcher, downloadImage, getSentDeals, addSentDeal, ensureImageFolderExists, WATCH_FOLDER, IMAGE_DOWNLOAD_FOLDER, SENT_FILE_PATH } = require("./watcher");
 
-// --- WHATSAPP KONFIGURATION aus .env / index.js übernommen ---
-// PFAD-KORREKTUR: Nutzt relative Pfade
-const SESSION_PATH = process.env.SESSION_PATH || "./session-data"; 
+// =============================
+// CONFIG
+// =============================
+const SESSION_PATH = process.env.SESSION_PATH || "./session-data";
 const CLIENT_ID = process.env.CLIENT_ID || "sport-bot-1";
-const RECIPIENT = process.env.RECIPIENT || ""; // 4917...
-const GROUP_NAME = process.env.GROUP_NAME || "Test"; // "Meine Sport Community"
+const RECIPIENT = process.env.RECIPIENT || "";
+const GROUP_NAME = process.env.GROUP_NAME || "";
+const CHANNEL_ID = process.env.CHANNEL_ID || "";
 
-// Verwenden Sie eine globale Variable für den Client
-let client; 
+let client;
 let initialized = false;
 let reconnectTimer = null;
 
-// ====================================================================
-// ===== Utils (aus index.js übernommen) =====
-// ====================================================================
-
+// =============================
+// UTILS
+// =============================
 function log(msg) {
-    const timestamp = new Date().toISOString();
-    console.log(`[${timestamp}] ${msg}`);
+  console.log(`[${new Date().toISOString()}] ${msg}`);
 }
 
 function ensureDir(p) {
-    try {
-        if (!fsn.existsSync(p)) {
-            fsn.mkdirSync(p, { recursive: true });
-        }
-    } catch (e) {
-        console.error(`[ERROR] Konnte Ordner nicht erstellen: ${p}`, e);
-    }
+  if (!fsn.existsSync(p)) {
+    fsn.mkdirSync(p, { recursive: true });
+  }
 }
 
-// ===== Vorbereitungen =====
 ensureDir(SESSION_PATH);
 ensureDir(path.resolve("./logs"));
 
+// =============================
+// DESTINATION RESOLVER
+// =============================
 
-// ====================================================================
-// ===== WHATSAPP SENDELOGIK =====
-// ====================================================================
-
-/**
- * Löst die Zieladresse (Nummer oder Gruppen-ID) auf.
- */
 async function resolveDestination() {
-    if (GROUP_NAME) {
-        const needle = GROUP_NAME.toLowerCase();
-        // Gibt eine Liste aller Chats zurück
-        const chats = await client.getChats();
-        const group = chats.find(
-            (c) => c.isGroup && c.name && c.name.toLowerCase() === needle
-        );
-
-        if (group) {
-            return group.id._serialized;
-        }
-
-        const similar = chats
-            .filter(
-                (c) => c.isGroup && c.name && c.name.toLowerCase().includes(needle)
-            )
-            .slice(0, 10)
-            .map((c) => c.name);
-        
-        if (similar.length) {
-            throw new Error(
-                `Gruppe "${GROUP_NAME}" nicht exakt gefunden. Ähnlich: ${similar.join(
-                    " | "
-                )}`
-            );
-        }
-        throw new Error(`Gruppe "${GROUP_NAME}" nicht gefunden.`);
+  // 1) WhatsApp-Kanal
+  if (CHANNEL_ID) {
+    if (!CHANNEL_ID.endsWith("@newsletter")) {
+      throw new Error(`CHANNEL_ID "${CHANNEL_ID}" ist ungültig – muss mit "@newsletter" enden.`);
     }
+    log(`Ziel: WhatsApp-Kanal: ${CHANNEL_ID}`);
+    return CHANNEL_ID;
+  }
 
-    if (!RECIPIENT) {
-        throw new Error("Weder GROUP_NAME noch RECIPIENT in .env gesetzt.");
+  // 2) Gruppe
+  if (GROUP_NAME) {
+    const needle = GROUP_NAME.toLowerCase();
+    const chats = await client.getChats();
+    const group = chats.find((c) => c.isGroup && c.name.toLowerCase() === needle);
+    if (group) {
+      log(`Ziel: Gruppe "${GROUP_NAME}" → ${group.id._serialized}`);
+      return group.id._serialized;
     }
+    throw new Error(`Gruppe "${GROUP_NAME}" nicht gefunden.`);
+  }
+
+  // 3) Einzel-Empfänger
+  if (RECIPIENT) {
     const phone = RECIPIENT.replace(/\D/g, "");
-    if (!phone)
-        throw new Error(
-            "RECIPIENT muss nur Ziffern enthalten (Ländervorwahl ohne +)."
-        );
-    // WhatsApp-Format für Einzelchat
-    return `${phone}@c.us`; 
+    if (!phone) throw new Error("RECIPIENT ist ungültig.");
+    return `${phone}@c.us`;
+  }
+
+  throw new Error("Kein Ziel gesetzt (weder CHANNEL_ID, GROUP_NAME noch RECIPIENT).");
 }
 
-/**
- * Sendet ein lokal gespeichertes Bild mit einer Bildunterschrift.
- * @param {string} imagePath - Lokaler Pfad zum Bild.
- * @param {string} caption - Der Nachrichtentext.
- */
+// =============================
+// IMAGE SENDER
+// =============================
 async function sendImageWithCaption(imagePath, caption) {
-    if (!fsn.existsSync(imagePath)) {
-        throw new Error(`Bild nicht gefunden: ${imagePath}`);
-    }
-    const to = await resolveDestination();
-    // MessageMedia erstellt die nötige Datenstruktur für WhatsApp
-    const media = MessageMedia.fromFilePath(imagePath); 
-    
-    await client.sendMessage(to, media, { caption: caption });
-    log(`📤 Angebot erfolgreich gesendet an ${to} (${path.basename(imagePath)})`);
+  if (!fsn.existsSync(imagePath)) throw new Error(`Bild fehlt: ${imagePath}`);
+
+  const to = await resolveDestination();
+  const media = MessageMedia.fromFilePath(imagePath);
+  await client.sendMessage(to, media, { caption });
+  log(`📤 Gesendet nach ${to}: ${path.basename(imagePath)}`);
 }
 
-// ====================================================================
-// ===== WHATSAPP CLIENT INITIALISIERUNG / RECONNECT =====
-// ====================================================================
-
-/**
- * Initialisiert den Client und startet den Reconnect-Mechanismus.
- */
+// =============================
+// CLIENT INIT
+// =============================
 async function initializeSafe() {
-    if (initialized) return;
+  if (initialized) return;
 
-    client = new Client({
-        authStrategy: new LocalAuth({
-            dataPath: SESSION_PATH, // fester Pfad -> Session bleibt
-            clientId: CLIENT_ID,
-        }),
-        puppeteer: {
-            // Empfohlen, um unter Linux/Headless zu funktionieren:
-            args: ['--no-sandbox', '--disable-setuid-sandbox'], 
-        },
-        // timeout-Einstellungen für mehr Robustheit
-        qrMaxRetries: 3, 
-        takeoverOnConflict: true,
-    });
+  client = new Client({
+    authStrategy: new LocalAuth({
+      dataPath: SESSION_PATH,
+      clientId: CLIENT_ID,
+    }),
+    puppeteer: {
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    },
+    qrMaxRetries: 3,
+    takeoverOnConflict: true,
+  });
 
-    client.on("qr", (qr) => {
-        // QR-Code im Terminal anzeigen
-        qrcode.generate(qr, { small: true });
-        log("🔑 QR-Code erhalten. Bitte scannen Sie ihn.");
-    });
-
-    client.on("authenticated", () => {
-        log("✅ Authentifiziert!");
-    });
-
-    client.on("ready", () => {
-        initialized = true;
-        log("🟢 WhatsApp Client ist bereit!");
-    });
-    
-    client.on('auth_failure', (msg) => {
-        // Der Client konnte die Session nicht laden
-        log(`❌ Authentifizierungsfehler: ${msg}`);
-        // WICHTIG: Erneuter Start notwendig
-        process.exit(1);
-    });
-    
-    client.on('disconnected', (reason) => {
-        initialized = false;
-        log(`🔴 Verbindung getrennt: ${reason}. Versuche Reconnect in 30s...`);
-        // Verzögerter Reconnect-Versuch (nur ein Timer zur Zeit)
-        if (reconnectTimer) clearTimeout(reconnectTimer);
-        reconnectTimer = setTimeout(() => {
-            log("🔄 Starte Reconnect-Versuch...");
-            client.initialize(); 
-        }, 30000);
-    });
+  client.on("qr", (qr) => qrcode.generate(qr, { small: true }));
+  client.on("authenticated", () => log("✅ Authentifiziert!"));
+  client.on("ready", async () => {
+    initialized = true;
+    log("🟢 WhatsApp Client ist bereit! (Verbose Chat Dump folgt)");
 
     try {
-        await client.initialize();
-    } catch (e) {
-        log(`Fataler Fehler beim Initialisieren: ${e.message}`);
-        process.exit(1);
-    }
-}
+      const chats = await client.getChannels();
 
-// ====================================================================
-// ===== HAUPT-ROUTING LOGIK =====
-// ====================================================================
+      log(`Gesamtanzahl Chats: ${chats.length}`);
 
-/**
- * Routet die neu erkannte Angebotsdatei zum WhatsApp-Versand.
- */
-async function routeNewOffer(fullPath) {
-    const fileName = path.basename(fullPath);
-    let localImagePath = null; // Muss im finally-Block verfügbar sein
-    
-    // 1. Prüfen, ob schon gesendet
-    const productId = fileName.replace(path.extname(fileName), '');
-    const sentDeals = await getSentDeals();
-    
-    if (sentDeals.includes(productId)) {
-        log(`⏭️ Deal ${productId} (${fileName}) wurde bereits gesendet. Überspringe.`);
-        return; 
-    }
-
-    log(`🔔 Neue Datei erkannt: ${fileName}. Starte Verarbeitung...`);
-
-    try {
-        // 2. Datei einlesen und parsen
-        const content = await fs.readFile(fullPath, 'utf8');
-        const data = JSON.parse(content);
-        
-        // --- NEUE LOGIK: Bild-URL extrahieren (unterstützt image_url ODER images[0]) ---
-        let imageUrl = data.image_url;
-        if (!imageUrl && data.images && Array.isArray(data.images) && data.images.length > 0) {
-            imageUrl = data.images[0]; // Wählt das erste Bild aus dem Array
-        }
-
-        // 3. Grundlegende Datenprüfung
-        // WICHTIG: Prüft jetzt auf die NEUE `imageUrl` Variable
-        if (!imageUrl || !data.title || !data.affiliate_url) {
-            log(`❌ [FEHLER] Datei ${fileName} ist unvollständig (Bild-URL, Titel oder Link fehlt).`);
-            log(`Details: URL: ${!!imageUrl}, Titel: ${!!data.title}, Link: ${!!data.affiliate_url}`);
-            return;
-        }
-
-        // 4. Bild herunterladen (lokaler Pfad wird zurückgegeben)
-        localImagePath = await downloadImage(imageUrl, productId); // Nutzt die extrahierte URL
-
-        if (!localImagePath) {
-            log(`❌ [FEHLER] Konnte kein Bild für ${productId} herunterladen. Überspringe.`);
-            return;
-        }
-
-        // 💡 Bild verarbeiten (Padding hinzufügen, falls hochkant)
+      // Detaillierter Dump (nur console, nicht zu große Objekte)
+      chats.forEach((c, idx) => {
         try {
-            const paddedPath = await ensureWhatsappWidth(localImagePath, {
-                // Weißen Hintergrund setzen, da JPEG keine Transparenz unterstützt
-                background: { r: 255, g: 255, b: 255, alpha: 1 } 
-            });
-
-            // Wenn ein neues, gepaddetes Bild erstellt wurde
-            if (paddedPath !== localImagePath) {
-                // Lösche das Originalbild, um Speicherplatz zu sparen
-                await fs.unlink(localImagePath).catch(e => log(`[INFO] Konnte Originalbild ${localImagePath} nicht löschen: ${e.message}`));
-                localImagePath = paddedPath;
-            }
+          const id = c.id && c.id._serialized ? c.id._serialized : JSON.stringify(c.id);
+          const type = c.isGroup ? "GROUP" : c.isChannel ? "CHANNEL" : "DIRECT";
+          const name = c.name || (c.contact && c.contact.pushname) || "(kein name)";
+          const server = (c.id && c.id.server) || "(kein server)";
+          log(`#${idx} - ${type} - name: ${name} - id: ${id} - server: ${server}`);
         } catch (e) {
-            log(`⚠️ [PADDING-FEHLER] Bild-Padding fehlgeschlagen: ${e.message}. Sende Originalbild.`);
-            // Bei Fehler senden wir einfach das (möglicherweise schmale) Originalbild weiter
+          log(`#${idx} - Fehler beim Auslesen eines Chats: ${e.message}`);
         }
-        
-        // 5. Nachricht zusammenstellen
-        const captionText = createOfferMessage(data)
-            .trim();
-            
-        await sendImageWithCaption(localImagePath, captionText);
+      });
 
-        // 6. Deal als "gesendet" markieren (Funktion aus watcher.js)
-        await addSentDeal(productId);
-        
-    } catch (error) {
-        log(`❌ [FEHLER] Konnte Datei ${fileName} nicht verarbeiten/routen: ${error.message}`);
-    } finally {
-        // Aufräumlogik...
-        if (localImagePath && fsn.existsSync(localImagePath)) {
-            // Wenn Sie die Bilder nach dem Senden löschen möchten, kommentieren Sie die folgende Zeile ein:
-            // await fs.unlink(localImagePath).catch(e => log(`[INFO] Konnte Bild ${localImagePath} nicht löschen: ${e.message}`));
-        }
+      // Suchen nach möglichen Channel-IDs (endend mit @newsletter)
+      const newsletterChats = chats.filter((c) => c.id && c.id._serialized && c.id._serialized.endsWith("@newsletter"));
+      if (newsletterChats.length) {
+        log("🔍 Gefundene @newsletter Chats:");
+        newsletterChats.forEach((c) => log(`   ${c.name} -> ${c.id._serialized}`));
+      } else {
+        log("ℹ️ Keine @newsletter-JIDs in getChats() gefunden.");
+      }
+    } catch (e) {
+      log(`⚠️ Fehler beim Auflisten der Chats: ${e.message}`);
     }
+  });
+
+  client.on("auth_failure", (msg) => {
+    log(`❌ Auth-Fehler: ${msg}`);
+    process.exit(1);
+  });
+
+  client.on("disconnected", (reason) => {
+    initialized = false;
+    log(`🔴 Verbindung weg: ${reason} – Reconnect in 30s`);
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(() => client.initialize(), 30000);
+  });
+
+  await client.initialize();
 }
 
-// ====================================================================
-// ===== CONTROLLER START =====
-// ====================================================================
+// =============================
+// OFFER ROUTER
+// =============================
+async function routeNewOffer(fullPath) {
+  const fileName = path.basename(fullPath);
+  const productId = fileName.replace(path.extname(fileName), "");
+  let localImagePath = null;
 
-/**
- * Startet den WhatsApp Router (den Controller).
- */
+  const sentDeals = await getSentDeals();
+  if (sentDeals.includes(productId)) {
+    log(`⏭️ Schon gesendet: ${productId}`);
+    return;
+  }
+
+  log(`🔔 Neues Angebot: ${fileName}`);
+
+  try {
+    const content = await fs.readFile(fullPath, "utf8");
+    const data = JSON.parse(content);
+
+    let imageUrl = data.image_url || (data.images?.[0] ?? null);
+
+    if (!imageUrl || !data.title || !data.affiliate_url) {
+      log("❌ Ungültige Datei – wichtige Daten fehlen.");
+      return;
+    }
+
+    localImagePath = await downloadImage(imageUrl, productId);
+    if (!localImagePath) {
+      log("❌ Bild-Download fehlgeschlagen.");
+      return;
+    }
+
+    try {
+      const padded = await ensureWhatsappWidth(localImagePath, {
+        background: { r: 255, g: 255, b: 255, alpha: 1 },
+      });
+      if (padded !== localImagePath) {
+        await fs.unlink(localImagePath).catch(() => {});
+        localImagePath = padded;
+      }
+    } catch {
+      log("⚠️ Padding fehlgeschlagen – Originalbild wird gesendet.");
+    }
+
+    await sendImageWithCaption(localImagePath, createOfferMessage(data).trim());
+    await addSentDeal(productId);
+  } catch (err) {
+    log(`❌ Fehler beim Verarbeiten: ${err.message}`);
+  }
+}
+
+// =============================
+// CONTROLLER START
+// =============================
 async function startWaRouter() {
-    // 1. Setup: Stellt sicher, dass der Bilder-Ordner existiert (Funktion aus watcher.js)
-    await ensureImageFolderExists();
-    
-    log(`Controller aktiv. Überwache Ordner: ${WATCH_FOLDER}`);
-    log(`Bilder werden nach: ${IMAGE_DOWNLOAD_FOLDER} heruntergeladen.`);
-    log(`Sent-Liste: ${SENT_FILE_PATH}`);
+  await ensureImageFolderExists();
 
-    // 2. WhatsApp Client initialisieren und auf Ready warten
-    await initializeSafe(); 
+  log(`Überwache Ordner: ${WATCH_FOLDER}`);
+  log(`Image-Output: ${IMAGE_DOWNLOAD_FOLDER}`);
+  log(`Sent-Liste: ${SENT_FILE_PATH}`);
 
-    // 3. Startet den Watcher und registriert die Router-Funktion als Callback
-    startWatcher(routeNewOffer);
+  await initializeSafe();
+  startWatcher(routeNewOffer);
 }
 
-// Start den Prozess
 startWaRouter();
