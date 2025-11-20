@@ -9,7 +9,7 @@ const { startWatcher, downloadImage, getSentDeals, addSentDeal, ensureImageFolde
 // Importiere die neuen Services
 // (Achte darauf, dass die Dateien im Unterordner 'services' liegen,
 // oder pass den Pfad hier an, wenn sie im gleichen Ordner liegen)
-const fbService = require("./src/facebook_service"); // oder "./facebook_service"
+// const fbService = require("./src/facebook_service"); // oder "./facebook_service" // AUSKOMMENTIERT
 const waService = require("./src/whatsapp_service"); // oder "./whatsapp_service"
 
 async function processDeal(fullPath) {
@@ -19,7 +19,7 @@ async function processDeal(fullPath) {
   // 1. Dubletten-Check (Zentral)
   const sentDeals = await getSentDeals();
   if (sentDeals.includes(productId)) {
-    console.log(`[MAIN] ⏭️  Deal ${productId} wurde bereits bearbeitet.`);
+    console.log(`[MAIN] ⏭️ Deal ${productId} wurde bereits bearbeitet.`);
     return;
   }
 
@@ -43,13 +43,15 @@ async function processDeal(fullPath) {
     console.log("[MAIN] 🚀 Verteile an Dienste...");
 
     // Wir nutzen Promise.allSettled, damit ein Fehler bei FB nicht WhatsApp stoppt (und umgekehrt)
-    //const results = await Promise.allSettled([fbService.sendPost(data, localImagePath), waService.sendMessage(data, localImagePath)]);
+    //const results = await Promise.allSettled([fbService.sendPost(data, localImagePath), waService.sendMessage(data, localImagePath)]); // FB AUSKOMMENTIERT
     const results = await Promise.allSettled([waService.sendMessage(data, localImagePath)]);
-    // Ergebnisse prüfen
-    const fbResult = results[0];
-    const waResult = results[1];
 
-    if (fbResult.status === "rejected") console.error(`[MAIN] ❌ FB Fehler: ${fbResult.reason}`);
+    // Ergebnisse prüfen
+    // const fbResult = results[0]; // FB AUSKOMMENTIERT
+    // const waResult = results[1]; // WAR VORHER [1], IST JETZT [0]
+    const waResult = results[0];
+
+    // if (fbResult.status === "rejected") console.error(`[MAIN] ❌ FB Fehler: ${fbResult.reason}`); // FB AUSKOMMENTIERT
     if (waResult.status === "rejected") console.error(`[MAIN] ❌ WA Fehler: ${waResult.reason}`);
 
     // 5. Als "Gesendet" markieren (nur wenn mindestens einer erfolgreich war)
@@ -70,7 +72,8 @@ async function startSystem() {
 
   // 1. Services initialisieren
   // Wir warten, bis WhatsApp bereit ist und der FB-Server läuft
-  await Promise.all([fbService.init(), waService.init()]);
+  // await Promise.all([fbService.init(), waService.init()]); // FB AUSKOMMENTIERT
+  await Promise.all([waService.init()]); // Nur noch WhatsApp
 
   console.log("----------------------------------------");
   console.log("✅ Alle Services bereit!");
