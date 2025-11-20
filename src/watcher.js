@@ -8,14 +8,25 @@ const os = require("os");
 // --- KONFIGURATION ---
 const HOME_DIR = os.homedir();
 const WATCH_FOLDER = path.join(HOME_DIR, "Desktop", "scraper", "data", "out");
-const SENT_FILE_PATH = path.join(__dirname,"../", "sent.json");
+const SENT_FILE_PATH = path.join(__dirname, "../", "sent.json");
 const IMAGE_DOWNLOAD_FOLDER = path.join(__dirname, "../", "images");
 
 // --- ZEIT-EINSTELLUNG (in Sekunden) ---
 // Lange Wartezeit, wenn die Queue leer ist (z.B. 10 Minuten)
 const IDLE_CYCLE_SECONDS = 600;
-// Drosselung zwischen ZWEI Deals (Ihr Wunsch: ca. 5 Minuten)
-const THROTTLE_SECONDS = 300;
+
+// --- NEUE HILFSFUNKTION FÜR ZUFÄLLIGE ZEIT ---
+/**
+ * Gibt eine zufällige Drosselungszeit (in Sekunden) zurück.
+ * Basis: 5 Minuten (300s). Random-Anteil: 0 bis 10 Minuten (0s bis 600s).
+ * Gesamtzeit: 5 bis 15 Minuten.
+ */
+function getRandomThrottleTimeSeconds() {
+  const baseSeconds = 300; // 5 Minuten
+  const maxRandomSeconds = 600; // 10 Minuten
+  // Math.random() gibt eine Zahl zwischen 0 (inklusive) und 1 (exklusive) zurück.
+  return baseSeconds + Math.floor(Math.random() * maxRandomSeconds);
+}
 
 const DOWNLOAD_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -98,7 +109,7 @@ async function downloadImage(url, productId) {
 async function startWatcher(processCallback) {
   console.log(`[WATCHER] 👁️  Polling-Modus gestartet.`);
   console.log(`[WATCHER] ⏱️  Zyklus-Zeit (Leerlauf): ${IDLE_CYCLE_SECONDS} Sekunden.`);
-  console.log(`[WATCHER] ⏱️  Drosselung (Zwischen Deals): ${THROTTLE_SECONDS} Sekunden (ca. 5 Minuten).`);
+  console.log(`[WATCHER] ⏱️  Drosselung (Zwischen Deals): 5 bis 15 Minuten (Zufällig).`);
   console.log(`[WATCHER] 📂 Ordner: ${WATCH_FOLDER}`);
 
   // Endlosschleife
@@ -128,6 +139,7 @@ async function startWatcher(processCallback) {
         // 4. Alle Treffer nacheinander verarbeiten
         for (let i = 0; i < candidates.length; i++) {
           const candidate = candidates[i];
+          const throttleTime = getRandomThrottleTimeSeconds();
 
           console.log(`\n[POLLING] Bearbeite Deal ${i + 1}/${candidates.length}: ${candidate.fileName}`);
 
@@ -137,8 +149,10 @@ async function startWatcher(processCallback) {
           // 5. Drosselung nach JEDER gesendeten Nachricht
           // (außer nach der letzten Nachricht des aktuellen Batches)
           if (i < candidates.length - 1) {
-            console.log(`[THROTTLE] ⏳ Warte ${THROTTLE_SECONDS}s (ca. 5 Minuten) vor der nächsten Nachricht...`);
-            await sleep(THROTTLE_SECONDS * 1000);
+            // Umrechnung von Sekunden in Minuten für besseres Logging
+            const minutes = (throttleTime / 60).toFixed(1);
+            console.log(`[THROTTLE] ⏳ Warte ${throttleTime}s (${minutes} Minuten) vor der nächsten Nachricht...`);
+            await sleep(throttleTime * 1000);
           }
         }
         console.log(`---------------------------------------------------`);
