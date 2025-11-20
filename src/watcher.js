@@ -14,8 +14,8 @@ const SENT_FILE_PATH = path.join(__dirname, "sent.json");
 const IMAGE_DOWNLOAD_FOLDER = path.join(__dirname, "images");
 
 // --- VERZÖGERUNGS-KONFIGURATION (in Sekunden) ---
-const MIN_DELAY_SECONDS = 10; // Mindestens 10 Sekunden warten
-const MAX_DELAY_SECONDS = 40; // Maximal 40 Sekunden warten (Anpassbar)
+const MIN_DELAY_SECONDS = 33; // Mindestens 10 Sekunden warten
+const MAX_DELAY_SECONDS = 63; // Maximal 40 Sekunden warten (Anpassbar)
 
 const DOWNLOAD_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

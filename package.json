@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "node wa_router.js"
+    "start": "node main.js"
   },
   "keywords": [],
   "author": "",
@@ -13,6 +13,7 @@
     "axios": "^1.13.0",
     "chokidar": "^4.0.3",
     "dotenv": "^17.2.3",
+    "mime-types": "^3.0.2",
     "qrcode-terminal": "^0.12.0",
     "sharp": "^0.34.5",
     "whatsapp-web.js": "^1.34.1"
