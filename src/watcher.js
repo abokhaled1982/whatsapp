@@ -13,7 +13,7 @@ const IMAGE_DOWNLOAD_FOLDER = path.join(__dirname, "../", "images");
 
 // --- ZEIT-EINSTELLUNG (in Sekunden) ---
 // Das ist dein "Takt". Er wartet diese Zeit zwischen jedem Check bzw. jedem Senden.
-const CYCLE_SECONDS = 300;
+const CYCLE_SECONDS = 60;
 
 const DOWNLOAD_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

@@ -43,8 +43,8 @@ async function processDeal(fullPath) {
     console.log("[MAIN] 🚀 Verteile an Dienste...");
 
     // Wir nutzen Promise.allSettled, damit ein Fehler bei FB nicht WhatsApp stoppt (und umgekehrt)
-    const results = await Promise.allSettled([fbService.sendPost(data, localImagePath), waService.sendMessage(data, localImagePath)]);
-
+    //const results = await Promise.allSettled([fbService.sendPost(data, localImagePath), waService.sendMessage(data, localImagePath)]);
+    const results = await Promise.allSettled([waService.sendMessage(data, localImagePath)]);
     // Ergebnisse prüfen
     const fbResult = results[0];
     const waResult = results[1];
