@@ -1,6 +1,4 @@
-// watcher.js - FINAL VERSION mit Zufalls-Verzögerung (Random Delay)
-
-const chokidar = require("chokidar");
+// watcher.js - Polling Version (Warteschlange)
 const fsp = require("fs/promises");
 const fs = require("fs");
 const path = require("path");
@@ -11,11 +9,11 @@ const os = require("os");
 const HOME_DIR = os.homedir();
 const WATCH_FOLDER = path.join(HOME_DIR, "Desktop", "scraper", "data", "out");
 const SENT_FILE_PATH = path.join(__dirname, "sent.json");
-const IMAGE_DOWNLOAD_FOLDER = path.join(__dirname, "images");
+const IMAGE_DOWNLOAD_FOLDER = path.join(__dirname, "../", "images");
 
-// --- VERZÖGERUNGS-KONFIGURATION (in Sekunden) ---
-const MIN_DELAY_SECONDS = 33; // Mindestens 10 Sekunden warten
-const MAX_DELAY_SECONDS = 63; // Maximal 40 Sekunden warten (Anpassbar)
+// --- ZEIT-EINSTELLUNG (in Sekunden) ---
+// Das ist dein "Takt". Er wartet diese Zeit zwischen jedem Check bzw. jedem Senden.
+const CYCLE_SECONDS = 300;
 
 const DOWNLOAD_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -24,11 +22,14 @@ const DOWNLOAD_HEADERS = {
 
 // --- HILFSFUNKTIONEN ---
 
+// Pausiert die Ausführung für x Millisekunden
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function ensureImageFolderExists() {
   try {
     await fsp.mkdir(IMAGE_DOWNLOAD_FOLDER, { recursive: true });
   } catch (error) {
-    console.error(`[FEHLER] Konnte Ordner ${IMAGE_DOWNLOAD_FOLDER} nicht erstellen: ${error.message}`);
+    console.error(`[FEHLER] Ordner-Fehler: ${error.message}`);
   }
 }
 
@@ -38,7 +39,7 @@ async function getSentDeals() {
     const data = await fsp.readFile(SENT_FILE_PATH, "utf-8");
     return JSON.parse(data);
   } catch (error) {
-    if (error.code === "ENOENT") return [];
+    if (error.code === "ENOENT") return []; // Datei existiert noch nicht
     return [];
   }
 }
@@ -49,7 +50,6 @@ async function addSentDeal(newId) {
     sentDeals.push(newId);
     try {
       await fsp.writeFile(SENT_FILE_PATH, JSON.stringify(sentDeals, null, 2));
-      console.log(`[VERFOLGUNG] Produkt-ID ${newId} zur sent.json hinzugefügt.`);
     } catch (error) {
       console.error("Fehler beim Schreiben der sent.json:", error.message);
     }
@@ -58,7 +58,6 @@ async function addSentDeal(newId) {
 
 async function downloadImage(url, productId) {
   if (!url || String(url).trim().toUpperCase() === "N/A" || !url.startsWith("http")) {
-    console.log("[DOWNLOAD] Keine gültige Bild-URL gefunden. Überspringe Download.");
     return null;
   }
 
@@ -66,11 +65,10 @@ async function downloadImage(url, productId) {
   const extension = extensionMatch ? extensionMatch[0] : ".jpg";
   const localFilePath = path.join(IMAGE_DOWNLOAD_FOLDER, `${productId}${extension}`);
 
-  console.log(`[DOWNLOAD] Starte Download für ${productId} von: ${url}`);
-
   try {
-    const writer = fs.createWriteStream(localFilePath);
+    if (fs.existsSync(localFilePath)) return localFilePath; // Schon da?
 
+    const writer = fs.createWriteStream(localFilePath);
     const response = await axios({
       url: url,
       method: "GET",
@@ -79,74 +77,71 @@ async function downloadImage(url, productId) {
       headers: DOWNLOAD_HEADERS,
     });
 
-    if (response.status !== 200) {
-      writer.close();
-      await fsp.unlink(localFilePath).catch(() => {});
-      throw new Error(`HTTP Fehlerstatus: ${response.status}`);
-    }
-
     response.data.pipe(writer);
 
     await new Promise((resolve, reject) => {
       writer.on("finish", resolve);
-      writer.on("error", (err) => {
-        fsp.unlink(localFilePath).catch(() => {});
-        reject(err);
-      });
+      writer.on("error", reject);
     });
 
-    console.log(`[DOWNLOAD] ✅ Erfolgreich gespeichert unter: ${localFilePath}`);
     return localFilePath;
   } catch (error) {
-    console.error(`[DOWNLOAD-FEHLER] Konnte Bild nicht speichern/herunterladen für ${productId}: ${error.message}`);
+    console.error(`[DOWNLOAD-FEHLER] Bild für ${productId} fehlgeschlagen: ${error.message}`);
     return null;
   }
 }
 
-// --- WATCHER SETUP ---
+// --- POLLING LOGIK (Der neue Kern) ---
 
-/**
- * Startet den Chokidar-Watcher mit ZUFÄLLIGER VERZÖGERUNG.
- */
-function startWatcher(callback) {
-  const watcher = chokidar.watch(WATCH_FOLDER, {
-    ignored: /(^|[\/\\])\../,
-    persistent: true,
-    ignoreInitial: true,
-    awaitWriteFinish: {
-      stabilityThreshold: 2000,
-      pollInterval: 100,
-    },
-  });
+async function startWatcher(processCallback) {
+  console.log(`[WATCHER] 👁️  Polling-Modus gestartet.`);
+  console.log(`[WATCHER] ⏱️  Zyklus-Zeit: ${CYCLE_SECONDS} Sekunden.`);
+  console.log(`[WATCHER] 📂 Ordner: ${WATCH_FOLDER}`);
 
-  watcher
-    .on("add", (filePath) => {
-      // 1. Berechne Zufallszeit zwischen MIN und MAX
-      const minMs = MIN_DELAY_SECONDS * 1000;
-      const maxMs = MAX_DELAY_SECONDS * 1000;
-      const randomDelay = Math.floor(Math.random() * (maxMs - minMs + 1) + minMs);
-      const seconds = (randomDelay / 1000).toFixed(1);
+  // Endlosschleife
+  while (true) {
+    try {
+      // 1. Listen abrufen
+      const allFiles = await fsp.readdir(WATCH_FOLDER);
+      const sentDeals = await getSentDeals();
 
-      const fileName = path.basename(filePath);
+      // 2. Nur JSON-Dateien
+      const jsonFiles = allFiles.filter((f) => f.endsWith(".json"));
 
-      console.log(`---------------------------------------------------`);
-      console.log(`[WATCHER] 👁️  Neue Datei erkannt: ${fileName}`);
-      console.log(`[TIMER] ⏳ Warte zufällig ${seconds} Sekunden vor Verarbeitung...`);
-      console.log(`---------------------------------------------------`);
+      // 3. Nach "ungesendet" filtern
+      // Wir prüfen, ob die ID (Dateiname ohne .json) schon in sent.json steht
+      const candidates = jsonFiles.filter((fileName) => {
+        const id = fileName.replace(".json", "");
+        return !sentDeals.includes(id);
+      });
 
-      // 2. Verzögerte Ausführung
-      setTimeout(() => {
-        console.log(`[TIMER] 🚀 Zeit abgelaufen! Starte Verarbeitung für: ${fileName}`);
-        callback(filePath); // Hier wird deine routeNewFacebookOffer Funktion aufgerufen
-      }, randomDelay);
-    })
-    .on("error", (error) => console.error(`[WATCHER-FEHLER]: ${error}`))
-    .on("ready", () => {
-      console.log(`[WATCHER-BEREIT] Überwache Ordner: ${WATCH_FOLDER}`);
-      console.log(`[MODUS] Zufalls-Intervall aktiv: ${MIN_DELAY_SECONDS}s bis ${MAX_DELAY_SECONDS}s`);
-    });
+      if (candidates.length > 0) {
+        // 4. Treffer! Wir nehmen EINE Datei (die erste in der Liste)
+        const nextFile = candidates[0];
+        const fullPath = path.join(WATCH_FOLDER, nextFile);
 
-  return watcher;
+        console.log(`---------------------------------------------------`);
+        console.log(`[POLLING] 🎯 Neue Datei gefunden: ${nextFile}`);
+        console.log(`[QUEUE] 📦 Noch in der Warteschlange: ${candidates.length - 1}`);
+
+        // Verarbeiten (Aufruf an main.js)
+        await processCallback(fullPath);
+
+        console.log(`[TIMER] ⏳ Warte ${CYCLE_SECONDS}s bis zum nächsten Zyklus...`);
+      } else {
+        // Keine neuen Dateien
+        // Optional: Log-Ausgabe reduzieren, damit die Konsole nicht vollgespammt wird
+        // process.stdout.write(".");
+      }
+    } catch (err) {
+      console.error(`[WATCHER-CRASH] Fehler im Loop: ${err.message}`);
+      // Kurze Pause bei Fehler, damit CPU nicht brennt
+      await sleep(5000);
+    }
+
+    // 5. Warten vor dem nächsten Check (Der Takt)
+    await sleep(CYCLE_SECONDS * 1000);
+  }
 }
 
 // --- EXPORTE ---
@@ -156,7 +151,5 @@ module.exports = {
   getSentDeals,
   addSentDeal,
   ensureImageFolderExists,
-  WATCH_FOLDER,
-  IMAGE_DOWNLOAD_FOLDER,
-  SENT_FILE_PATH,
+  WATCH_FOLDER, // Für Debugging
 };
