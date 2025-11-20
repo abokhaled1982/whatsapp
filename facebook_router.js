@@ -1,32 +1,51 @@
-// facebook_router.js - Verbindet Watcher mit WebSocket Client
+// facebook_router.js - Mit Heartbeat um Chrome wach zu halten
 
 require("dotenv").config();
 const WebSocket = require("ws");
 const fs = require("fs");
 const path = require("path");
 
-// Importiere deine bestehenden Helper
-const { startWatcher, downloadImage, getSentDeals, addSentDeal, ensureImageFolderExists, WATCH_FOLDER } = require("./watcher");
+const { startWatcher, downloadImage, getSentDeals, addSentDeal, ensureImageFolderExists } = require("./watcher");
 
 const { createFacebookMessage } = require("./facebook_message");
 
 // =============================
 // KONFIGURATION
 // =============================
-const PORT = 8080; // Port für die Chrome Extension
+const PORT = 8080;
 
 // =============================
 // WEBSOCKET SERVER SETUP
 // =============================
-console.log(`--- FACEBOOK ROUTER START ---`);
+console.log(`--- FACEBOOK ROUTER GESTARTET ---`);
 const wss = new WebSocket.Server({ port: PORT });
 
 console.log(`📡 WebSocket Server läuft auf Port ${PORT}`);
-console.log(`👀 Überwache Ordner: ${WATCH_FOLDER}`);
+console.log(`👀 Warte auf Signale vom Watcher...`);
 
 wss.on("connection", (ws) => {
   console.log("✅ Neue Verbindung: Chrome Extension ist verbunden!");
+  ws.isAlive = true;
+
+  ws.on("pong", () => {
+    ws.isAlive = true;
+  });
+
+  ws.on("close", () => {
+    console.log("❌ Verbindung zu einem Client verloren.");
+  });
 });
+
+// --- HEARTBEAT / KEEP-ALIVE ---
+// Sendet alle 15 Sekunden ein Signal, damit Chrome nicht einschläft
+setInterval(() => {
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      // Sende Ping-Objekt (einfacher als Low-Level Ping für JSON Parsing)
+      client.send(JSON.stringify({ type: "ping" }));
+    }
+  });
+}, 15000); // Alle 15 Sekunden (muss unter 30s sein!)
 
 // =============================
 // LOGIK: DATEI -> BASE64
@@ -48,40 +67,34 @@ async function routeNewFacebookOffer(fullPath) {
   const fileName = path.basename(fullPath);
   const productId = fileName.replace(path.extname(fileName), "");
 
-  // 1. Prüfung: Wurde der Deal schon gesendet?
   const sentDeals = await getSentDeals();
   if (sentDeals.includes(productId)) {
-    console.log(`⏭️ Schon gesendet (laut sent.json): ${productId}`);
+    console.log(`⏭️  Schon gesendet: ${productId}`);
     return;
   }
 
-  console.log(`🔔 Neuer Facebook-Kandidat: ${fileName}`);
+  console.log(`🔔 VERARBEITE JETZT: ${fileName}`);
 
   try {
-    // 2. JSON lesen
     const content = fs.readFileSync(fullPath, "utf8");
     const data = JSON.parse(content);
 
     let imageUrl = data.image_url || (data.images?.[0] ?? null);
 
     if (!data.title || !data.affiliate_url) {
-      console.log("❌ Ungültige Datei – Titel oder URL fehlen.");
+      console.log("❌ Ungültige Datei.");
       return;
     }
 
-    // 3. Bild herunterladen (nutzt deine watcher.js Logic)
     const localImagePath = await downloadImage(imageUrl, productId);
-
-    // 4. Text generieren
     const fbText = createFacebookMessage(data);
 
-    // 5. Payload für Chrome Extension bauen
     let payload = {
+      type: "post", // Markiere dies als echten Post
       text: fbText,
       image: null,
     };
 
-    // Wenn Bild vorhanden, in Base64 umwandeln für WebSocket
     if (localImagePath) {
       const base64Image = convertFileToBase64(localImagePath);
       if (base64Image) {
@@ -89,7 +102,6 @@ async function routeNewFacebookOffer(fullPath) {
       }
     }
 
-    // 6. An alle verbundenen Clients (Extension) senden
     let clientCount = 0;
     wss.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
@@ -99,23 +111,18 @@ async function routeNewFacebookOffer(fullPath) {
     });
 
     if (clientCount > 0) {
-      console.log(`📤 An ${clientCount} Client(s) gesendet: ${data.title.substring(0, 30)}...`);
-      // Erst als "gesendet" markieren, wenn Clients da waren
+      console.log(`📤 An ${clientCount} Client(s) gesendet.`);
       await addSentDeal(productId);
     } else {
-      console.log("⚠️ Kein Client verbunden! Deal wird beim nächsten Start erneut versucht (nicht in sent.json gespeichert).");
+      console.log("⚠️ Kein Client verbunden! Chrome schläft wohl.");
     }
   } catch (err) {
     console.error(`❌ Fehler beim Verarbeiten: ${err.message}`);
   }
 }
 
-// =============================
-// START
-// =============================
 async function startFbRouter() {
   await ensureImageFolderExists();
-  // Startet den Watcher mit der Facebook-Callback-Funktion
   startWatcher(routeNewFacebookOffer);
 }
 
