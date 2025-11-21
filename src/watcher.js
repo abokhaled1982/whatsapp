@@ -23,7 +23,7 @@ const IDLE_CYCLE_SECONDS = 300;
  */
 function getRandomThrottleTimeSeconds() {
   const baseSeconds = 300; // 5 Minuten
-  const maxRandomSeconds = 300; // 10 Minuten
+  const maxRandomSeconds = 600; // 10 Minuten
   // Math.random() gibt eine Zahl zwischen 0 (inklusive) und 1 (exklusive) zurück.
   return baseSeconds + Math.floor(Math.random() * maxRandomSeconds);
 }
