@@ -1,4 +1,3 @@
-// main.js - Die Zentrale für BEIDE Dienste
 require("dotenv").config();
 const fs = require("fs/promises");
 const path = require("path");
@@ -6,11 +5,10 @@ const path = require("path");
 // Importiere unsere Tools
 const { startWatcher, downloadImage, getSentDeals, addSentDeal, ensureImageFolderExists } = require("./src/watcher");
 
-// Importiere die neuen Services
-// (Achte darauf, dass die Dateien im Unterordner 'services' liegen,
-// oder pass den Pfad hier an, wenn sie im gleichen Ordner liegen)
-// const fbService = require("./src/facebook_service"); // oder "./facebook_service" // AUSKOMMENTIERT
-const waService = require("./src/whatsapp_service"); // oder "./whatsapp_service"
+// Importiere die Services
+// Facebook Service wieder aktiviert
+const fbService = require("./src/facebook_service");
+const waService = require("./src/whatsapp_service");
 
 async function processDeal(fullPath) {
   const fileName = path.basename(fullPath);
@@ -39,25 +37,28 @@ async function processDeal(fullPath) {
     let imageUrl = data.image_url || (data.images?.[0] ?? null);
     const localImagePath = await downloadImage(imageUrl, productId);
 
-    // 4. Parallel (oder nacheinander) an beide Dienste senden
-    console.log("[MAIN] 🚀 Verteile an Dienste...");
+    // 4. Parallel an BEIDE Dienste senden
+    console.log("[MAIN] 🚀 Verteile an Facebook & WhatsApp...");
 
     // Wir nutzen Promise.allSettled, damit ein Fehler bei FB nicht WhatsApp stoppt (und umgekehrt)
-    //const results = await Promise.allSettled([fbService.sendPost(data, localImagePath), waService.sendMessage(data, localImagePath)]); // FB AUSKOMMENTIERT
-    const results = await Promise.allSettled([waService.sendMessage(data, localImagePath)]);
+    const results = await Promise.allSettled([
+      fbService.sendPost(data, localImagePath), // Index 0
+      waService.sendMessage(data, localImagePath), // Index 1
+    ]);
 
     // Ergebnisse prüfen
-    // const fbResult = results[0]; // FB AUSKOMMENTIERT
-    // const waResult = results[1]; // WAR VORHER [1], IST JETZT [0]
-    const waResult = results[0];
+    const fbResult = results[0];
+    const waResult = results[1];
 
-    // if (fbResult.status === "rejected") console.error(`[MAIN] ❌ FB Fehler: ${fbResult.reason}`); // FB AUSKOMMENTIERT
+    if (fbResult.status === "rejected") console.error(`[MAIN] ❌ FB Fehler: ${fbResult.reason}`);
     if (waResult.status === "rejected") console.error(`[MAIN] ❌ WA Fehler: ${waResult.reason}`);
 
-    // 5. Als "Gesendet" markieren (nur wenn mindestens einer erfolgreich war)
-    // Du kannst hier entscheiden: Soll es markiert werden, wenn EINER es geschafft hat?
+    if (fbResult.status === "fulfilled") console.log(`[MAIN] ✅ Facebook Post gesendet.`);
+    if (waResult.status === "fulfilled") console.log(`[MAIN] ✅ WhatsApp Nachricht gesendet.`);
+
+    // 5. Als "Gesendet" markieren (wenn mindestens einer erfolgreich war oder generell)
     await addSentDeal(productId);
-    console.log("[MAIN] ✅ Deal abgeschlossen.");
+    console.log("[MAIN] ✅ Deal Verarbeitung abgeschlossen.");
   } catch (err) {
     console.error(`[MAIN] ❌ Kritischer Fehler: ${err.message}`);
   }
@@ -71,15 +72,19 @@ async function startSystem() {
   await ensureImageFolderExists();
 
   // 1. Services initialisieren
-  // Wir warten, bis WhatsApp bereit ist und der FB-Server läuft
-  // await Promise.all([fbService.init(), waService.init()]); // FB AUSKOMMENTIERT
-  await Promise.all([waService.init()]); // Nur noch WhatsApp
+  // Wir warten, bis Facebook UND WhatsApp bereit sind
+  try {
+    await Promise.all([fbService.init(), waService.init()]);
+  } catch (error) {
+    console.error("❌ Fehler bei der Initialisierung der Services:", error);
+    // Optional: Prozess beenden, wenn Init fehlschlägt
+    // process.exit(1);
+  }
 
   console.log("----------------------------------------");
-  console.log("✅ Alle Services bereit!");
+  console.log("✅ Alle Services (FB & WA) bereit!");
 
-  // 2. Watcher starten (mit der Random-Logik aus watcher.js)
-  // Wir übergeben unsere zentrale processDeal Funktion
+  // 2. Watcher starten
   startWatcher(processDeal);
 }
 
