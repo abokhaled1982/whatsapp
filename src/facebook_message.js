@@ -31,7 +31,7 @@ function createFacebookMessage(data = {}) {
 
   // ZEILE 1: Der "Hook" (Titel kurz halten wenn möglich, oder einfach Emoji davor)
   // Wir nutzen 🔴 oder 🔥 als Stopper.
-  let msg = `🔥 ${title}\n`;
+  let msg = `${title}\n`;
 
   // ZEILE 2: Die "Rechnung" (Preis | Alter Preis | Rabatt)
   // Facebook kann kein Durchstreichen, daher: "statt X"
@@ -56,12 +56,12 @@ function createFacebookMessage(data = {}) {
 
   // Coupon Box (nur wenn Code existiert)
   if (couponCode && couponCode !== "N/A") {
-    details.push(`🎟️ Code an der Kasse: ${couponCode}`);
+    details.push(`Code an der Kasse: ${couponCode}`);
   }
 
   // Extra Info (nur wenn relevant)
   if (extraText && extraText.length > 5 && extraText !== "N/A") {
-    details.push(`ℹ️ ${extraText}`);
+    details.push(`ℹ${extraText}`);
   }
 
   // Wenn wir Details haben, fügen wir sie mit Abstand an
