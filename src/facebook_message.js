@@ -26,7 +26,8 @@ function createFacebookMessage(data = {}) {
   const couponCode = cleanValue(data.coupon?.code || data.coupon_code);
   // Nimm rabatt_text oder description, falls vorhanden
   const extraText = stripStars(data.rabatt_text || data.feature_text || "");
-
+  const rawHashtags = data.hashtags || [];
+  const hashtags = rawHashtags.map(tag => cleanValue(tag)).filter(Boolean).join(" ");
   // --- AUFBAU DER NACHRICHT ---
 
   // ZEILE 1: Der "Hook" (Titel kurz halten wenn möglich, oder einfach Emoji davor)
@@ -61,7 +62,7 @@ function createFacebookMessage(data = {}) {
 
   // Extra Info (nur wenn relevant)
   if (extraText && extraText.length > 5 && extraText !== "N/A") {
-    details.push(`ℹ${extraText}`);
+    details.push(`${extraText}`);
   }
 
   // Wenn wir Details haben, fügen wir sie mit Abstand an
@@ -69,8 +70,14 @@ function createFacebookMessage(data = {}) {
     msg += `\n${details.join("\n")}\n`;
   }
 
+  
   // Hashtags ganz unten (für die Suche, stören oben nur)
-  msg += `\n#Angebot #Schnäppchen #Deal #Sparen #Amazon`;
+  if (hashtags) {
+    msg += `\n${hashtags}`; // NEU: Dynamische Hashtags
+  } else {
+    // Optional: Fallback, falls keine Hashtags vorhanden
+    msg += `\n#blackfriday #Angebot #Schnäppchen #Deal`;
+  }
 
   return msg.trim();
 }
