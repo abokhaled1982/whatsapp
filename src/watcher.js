@@ -1,187 +1,156 @@
-// watcher.js - Polling Version (Warteschlange)
-const fsp = require("fs/promises");
-const fs = require("fs");
+// src/watcher.js
+const fs = require("fs/promises");
 const path = require("path");
-const axios = require("axios");
 const os = require("os");
+
+const utils = require("./utils");
+const processor = require("./processor");
+const fbService = require("./facebook_service");
+const waService = require("./whatsapp_service");
 
 // --- KONFIGURATION ---
 const HOME_DIR = os.homedir();
 const WATCH_FOLDER = path.join(HOME_DIR, "Desktop", "scraper", "data", "out");
-const SENT_FILE_PATH = path.join(__dirname, "../", "sent.json");
-const IMAGE_DOWNLOAD_FOLDER = path.join(__dirname, "../", "images");
+const CHECK_INTERVAL_SECONDS = 30; // Wie oft prüfen wir, wenn nichts los ist?
 
-// --- ZEIT-EINSTELLUNG (in Sekunden) ---
-// Lange Wartezeit, wenn die Queue leer ist (z.B. 10 Minuten)
-const IDLE_CYCLE_SECONDS = 30;
-
-// --- NEUE HILFSFUNKTION FÜR ZUFÄLLIGE ZEIT ---
-/**
- * Gibt eine zufällige Drosselungszeit (in Sekunden) zurück.
- * Basis: 5 Minuten (300s). Random-Anteil: 0 bis 10 Minuten (0s bis 600s).
- * Gesamtzeit: 5 bis 15 Minuten.
- */
-function getRandomThrottleTimeSeconds() {
-  const baseSeconds = 800; // 5 Minuten
-  const maxRandomSeconds = 800; // 10 Minuten
-  // Math.random() gibt eine Zahl zwischen 0 (inklusive) und 1 (exklusive) zurück.
-  return baseSeconds + Math.floor(Math.random() * maxRandomSeconds);
-}
-
-const DOWNLOAD_HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-};
+// Wartezeit Grenzen (in Sekunden)
+const MIN_WAIT_SECONDS = 300; // 5 Minuten
+const MAX_WAIT_SECONDS = 600; // 10 Minuten
 
 // --- HILFSFUNKTIONEN ---
 
-// Pausiert die Ausführung für x Millisekunden
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function ensureImageFolderExists() {
-  try {
-    await fsp.mkdir(IMAGE_DOWNLOAD_FOLDER, { recursive: true });
-  } catch (error) {
-    console.error(`[FEHLER] Ordner-Fehler: ${error.message}`);
-  }
+/**
+ * Gibt eine Zufallszahl zwischen MIN und MAX zurück
+ */
+function getRandomWaitSeconds() {
+  return Math.floor(Math.random() * (MAX_WAIT_SECONDS - MIN_WAIT_SECONDS + 1)) + MIN_WAIT_SECONDS;
 }
 
-async function getSentDeals() {
+/**
+ * Formatiert Sekunden in "Xm Ys" für die Konsole
+ */
+function formatDuration(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}m ${s}s`; // z.B. "7m 12s"
+}
+
+/**
+ * Führt das Warten aus und zeigt Countdown/Info an
+ */
+async function performSafetyWait() {
+  const waitTime = getRandomWaitSeconds();
+  const formatted = formatDuration(waitTime);
+  
+  console.log(`[SAFETY] 🛡️  Sicherheits-Pause: Warte ${formatted} bis zum nächsten Deal...`);
+  
+  // Wir warten hier die volle Zeit
+  await sleep(waitTime * 1000);
+  
+  console.log("[SAFETY] 🟢 Pause beendet. Weiter geht's.");
+}
+
+async function getCandidates() {
   try {
-    await ensureImageFolderExists();
-    const data = await fsp.readFile(SENT_FILE_PATH, "utf-8");
-    return JSON.parse(data);
-  } catch (error) {
-    if (error.code === "ENOENT") return []; // Datei existiert noch nicht
+    const sentDeals = await utils.getSentDeals();
+    const allFiles = await fs.readdir(WATCH_FOLDER);
+    return allFiles
+      .filter((f) => f.endsWith(".json"))
+      .filter((f) => !sentDeals.includes(f.replace(".json", "")))
+      .map((f) => path.join(WATCH_FOLDER, f));
+  } catch (e) {
+    console.error(`[FS] Fehler beim Lesen: ${e.message}`);
     return [];
   }
 }
 
-async function addSentDeal(newId) {
-  const sentDeals = await getSentDeals();
-  if (!sentDeals.includes(newId)) {
-    sentDeals.push(newId);
-    try {
-      await fsp.writeFile(SENT_FILE_PATH, JSON.stringify(sentDeals, null, 2));
-    } catch (error) {
-      console.error("Fehler beim Schreiben der sent.json:", error.message);
+// --- PHASEN ---
+
+// Phase 1: Init
+async function runInitPhase() {
+  console.log("1️⃣  [INIT] Prüfe Ordner und Dienste...");
+  await utils.ensureFoldersExist(WATCH_FOLDER);
+  
+  try {
+    await Promise.all([fbService.init(), waService.init()]);
+    console.log("✅ [INIT] Services bereit.");
+  } catch (e) {
+    console.error("❌ [INIT] Service-Start fehlgeschlagen:", e);
+    process.exit(1);
+  }
+}
+
+// Phase 2: Batch (Alte Dateien abarbeiten)
+async function runBatchPhase() {
+  console.log("2️⃣  [BATCH] Prüfe Rückstand...");
+  
+  // Wir holen die Liste immer frisch, falls sich was ändert
+  let candidates = await getCandidates();
+
+  if (candidates.length === 0) {
+    console.log("✅ [BATCH] Kein Rückstand vorhanden.");
+    return;
+  }
+
+  console.log(`📦 Found: ${candidates.length} Deals im Rückstand. Arbeite ab...`);
+  
+  // Wir iterieren manuell, damit wir warten können
+  for (let i = 0; i < candidates.length; i++) {
+    const file = candidates[i];
+    
+    // Verarbeiten
+    const wasSent = await processor.processSingleDeal(file);
+    
+    // WENN gesendet wurde, DANN warten wir.
+    // Auch beim letzten Element im Batch warten wir, damit wir nicht 
+    // direkt danach im Live-Loop sofort wieder feuern.
+    if (wasSent) {
+      await performSafetyWait();
     }
   }
+  console.log("✅ [BATCH] Rückstand erledigt.");
 }
 
-async function downloadImage(url, productId) {
-  if (!url || String(url).trim().toUpperCase() === "N/A" || !url.startsWith("http")) {
-    return null;
-  }
+// Phase 3: Watch Loop (Auf neue warten)
+async function runWatchLoop() {
+  console.log("\n3️⃣  [WATCHER] 👁️  Live-Modus aktiv...");
 
-  const extensionMatch = url.match(/\.(png|jpg|jpeg|webp|gif)/i);
-  const extension = extensionMatch ? extensionMatch[0] : ".jpg";
-  const localFilePath = path.join(IMAGE_DOWNLOAD_FOLDER, `${productId}${extension}`);
-
-  try {
-    if (fs.existsSync(localFilePath)) return localFilePath; // Schon da?
-
-    const writer = fs.createWriteStream(localFilePath);
-    const response = await axios({
-      url: url,
-      method: "GET",
-      responseType: "stream",
-      timeout: 15000,
-      headers: DOWNLOAD_HEADERS,
-    });
-
-    response.data.pipe(writer);
-
-    await new Promise((resolve, reject) => {
-      writer.on("finish", resolve);
-      writer.on("error", reject);
-    });
-
-    return localFilePath;
-  } catch (error) {
-    console.error(`[DOWNLOAD-FEHLER] Bild für ${productId} fehlgeschlagen: ${error.message}`);
-    return null;
-  }
-}
-
-// --- POLLING LOGIK (Der neue Kern) ---
-
-async function startWatcher(processCallback) {
-  console.log(`[WATCHER] 👁️  Polling-Modus gestartet.`);
-  console.log(`[WATCHER] ⏱️  Zyklus-Zeit (Leerlauf): ${IDLE_CYCLE_SECONDS} Sekunden.`);
-  console.log(`[WATCHER] ⏱️  Drosselung (Zwischen Deals): 5 bis 15 Minuten (Zufällig).`);
-  console.log(`[WATCHER] 📂 Ordner: ${WATCH_FOLDER}`);
-
-  // Endlosschleife
   while (true) {
-    let waitTime = IDLE_CYCLE_SECONDS;
     try {
-      // 1. Listen abrufen
-      const allFiles = await fsp.readdir(WATCH_FOLDER);
-      const sentDeals = await getSentDeals();
-
-      // 2. Nur JSON-Dateien und ungesendet filtern
-      const jsonFiles = allFiles.filter((f) => f.endsWith(".json"));
-
-      // 3. Nach "ungesendet" filtern
-      const candidates = jsonFiles
-        .map((fileName) => ({
-          fileName,
-          id: fileName.replace(".json", ""),
-          fullPath: path.join(WATCH_FOLDER, fileName),
-        }))
-        .filter((candidate) => !sentDeals.includes(candidate.id));
+      const candidates = await getCandidates();
 
       if (candidates.length > 0) {
-        console.log(`\n---------------------------------------------------`);
-        console.log(`[POLLING] 🎯 ${candidates.length} neue Deals in der Warteschlange gefunden.`);
+        console.log(`[LIVE] 🎯 ${candidates.length} neue Datei(en) entdeckt.`);
+        
+        for (const file of candidates) {
+          const wasSent = await processor.processSingleDeal(file);
 
-        // 4. Alle Treffer nacheinander verarbeiten
-        for (let i = 0; i < candidates.length; i++) {
-          const candidate = candidates[i];
-          const throttleTime = getRandomThrottleTimeSeconds();
-
-          console.log(`\n[POLLING] Bearbeite Deal ${i + 1}/${candidates.length}: ${candidate.fileName}`);
-
-          // Verarbeiten (Aufruf an main.js)
-          await processCallback(candidate.fullPath);
-
-          // 5. Drosselung nach JEDER gesendeten Nachricht
-          // (außer nach der letzten Nachricht des aktuellen Batches)
-          if (i < candidates.length - 1) {
-            // Umrechnung von Sekunden in Minuten für besseres Logging
-            const minutes = (throttleTime / 60).toFixed(1);
-            console.log(`[THROTTLE] ⏳ Warte ${throttleTime}s (${minutes} Minuten) vor der nächsten Nachricht...`);
-            await sleep(throttleTime * 1000);
+          if (wasSent) {
+            await performSafetyWait();
           }
         }
-        console.log(`---------------------------------------------------`);
-        console.log(`[POLLING] ✅ Warteschlange abgearbeitet.`);
-
-        // Nach Abarbeitung der Queue, warten wir die IDLE_CYCLE_SECONDS, um den Ordner erneut zu prüfen.
-        waitTime = IDLE_CYCLE_SECONDS;
-      } else {
-        // Keine neuen Dateien gefunden
-        process.stdout.write(".");
-        waitTime = IDLE_CYCLE_SECONDS; // Warten die Standardzeit
       }
     } catch (err) {
-      console.error(`[WATCHER-CRASH] Fehler im Loop: ${err.message}`);
-      // Kurze Pause bei Fehler, damit CPU nicht brennt
-      waitTime = 5;
+      console.error(`[LOOP-ERROR] ${err.message}`);
     }
 
-    // 6. Warten vor dem nächsten Check.
-    await sleep(waitTime * 1000);
+    // Kurzer Sleep, um CPU zu sparen, wenn KEINE Dateien da sind
+    // Das ist NICHT die Drosselung nach dem Senden, sondern nur "Leerlauf"
+    await sleep(CHECK_INTERVAL_SECONDS * 1000);
   }
 }
 
-// --- EXPORTE ---
-module.exports = {
-  startWatcher,
-  downloadImage,
-  getSentDeals,
-  addSentDeal,
-  ensureImageFolderExists,
-  WATCH_FOLDER, // Für Debugging
-};
+// --- START ---
+async function startSystem() {
+  console.log("========================================");
+  console.log("   🚀 DEAL BOT SYSTEM (STABLE WAIT)     ");
+  console.log("========================================");
+
+  await runInitPhase();
+  await runBatchPhase();
+  await runWatchLoop();
+}
+
+module.exports = { startSystem, WATCH_FOLDER };
