@@ -77,9 +77,9 @@ function validateDealData(data) {
     discountValue = parseFloat(cleanString);
   }
 
-  if (discountValue <= 10) {
-    return { valid: false, reason: `Rabatt zu niedrig (${discountValue}%)`, discount: discountValue };
-  }
+  // if (discountValue <= 10) {
+  //   return { valid: false, reason: `Rabatt zu niedrig (${discountValue}%)`, discount: discountValue };
+  // }
 
   return { valid: true, reason: "OK", discount: discountValue };
 }

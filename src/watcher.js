@@ -14,8 +14,8 @@ const WATCH_FOLDER = path.join(HOME_DIR, "Desktop", "scraper", "data", "out");
 const CHECK_INTERVAL_SECONDS = 30; // Wie oft prüfen wir, wenn nichts los ist?
 
 // Wartezeit Grenzen (in Sekunden)
-const MIN_WAIT_SECONDS = 300; // 5 Minuten
-const MAX_WAIT_SECONDS = 600; // 10 Minuten
+const MIN_WAIT_SECONDS = 250; // 5 Minuten
+const MAX_WAIT_SECONDS = 500; // 10 Minuten
 
 // --- HILFSFUNKTIONEN ---
 
