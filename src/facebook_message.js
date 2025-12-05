@@ -17,25 +17,26 @@ function cleanValue(v) {
 function createFacebookMessage(data = {}) {
   // 1. Daten bereinigen
   const title = stripStars(data.title || data.name || "Super Angebot");
-  const url = cleanValue(data.affiliate_url || data.url);
+  // URL wird hier NICHT mehr für den Text geholt, da sie in den Kommentar kommt
 
   const price = cleanValue(data.price?.raw || data.price || data.deal_price);
   const oldPrice = cleanValue(data.original_price?.raw || data.original_price);
   const discount = cleanValue(data.discount_percent || data.discount);
 
   const couponCode = cleanValue(data.coupon?.code || data.coupon_code);
-  // Nimm rabatt_text oder description, falls vorhanden
   const extraText = stripStars(data.rabatt_text || data.feature_text || "");
   const rawHashtags = data.hashtags || [];
-  const hashtags = rawHashtags.map(tag => cleanValue(tag)).filter(Boolean).join(" ");
+  const hashtags = rawHashtags
+    .map((tag) => cleanValue(tag))
+    .filter(Boolean)
+    .join(" ");
+
   // --- AUFBAU DER NACHRICHT ---
 
-  // ZEILE 1: Der "Hook" (Titel kurz halten wenn möglich, oder einfach Emoji davor)
-  // Wir nutzen 🔴 oder 🔥 als Stopper.
+  // ZEILE 1: Der "Hook"
   let msg = `${title}\n`;
 
-  // ZEILE 2: Die "Rechnung" (Preis | Alter Preis | Rabatt)
-  // Facebook kann kein Durchstreichen, daher: "statt X"
+  // ZEILE 2: Die "Rechnung"
   let priceLineParts = [];
 
   if (price) priceLineParts.push(`💶 Nur ${price}`);
@@ -46,36 +47,29 @@ function createFacebookMessage(data = {}) {
     msg += `${priceLineParts.join(" ")}\n`;
   }
 
-  // ZEILE 3: Der Call-to-Action (Muss sichtbar sein!)
-  if (url) {
-    msg += `👉 Zum Deal: ${url}\n`;
-  }
-
-  // --- AB HIER: "UNTER DEM KNICK" (Alles was danach kommt ist Bonus) ---
+  // ZEILE 3: Der "Hook"
 
   let details = [];
 
-  // Coupon Box (nur wenn Code existiert)
   if (couponCode && couponCode !== "N/A") {
     details.push(`Code an der Kasse: ${couponCode}`);
   }
 
-  // Extra Info (nur wenn relevant)
   if (extraText && extraText.length > 5 && extraText !== "N/A") {
     details.push(`${extraText}`);
   }
 
-  // Wenn wir Details haben, fügen wir sie mit Abstand an
   if (details.length > 0) {
-    msg += `\n${details.join("\n")}\n`;
+    msg += `${details.join("\n")}\n`;
   }
 
-  
-  // Hashtags ganz unten (für die Suche, stören oben nur)
+  // ZEILE 3: Hinweis auf die Kommentare (statt Link)
+  msg += `👇 Link zum Deal in den Kommentaren 👇\n`;
+
+  // Hashtags ganz unten
   if (hashtags) {
-    msg += `\n${hashtags}`; // NEU: Dynamische Hashtags
+    msg += `\n${hashtags}`;
   } else {
-    // Optional: Fallback, falls keine Hashtags vorhanden
     msg += `\n#blackfriday #Angebot #Schnäppchen #Deal`;
   }
 

@@ -1,7 +1,7 @@
 // services/facebook_service.js
 const WebSocket = require("ws");
 const fs = require("fs");
-const { createFacebookMessage } = require("./facebook_message"); // Pfad ggf. anpassen
+const { createFacebookMessage } = require("./facebook_message");
 
 let wss;
 const PORT = 8080;
@@ -49,14 +49,19 @@ async function sendPost(data, localImagePath) {
     return;
   }
 
-  // Text generieren
+  // 1. Text generieren (Ohne Link, siehe facebook_message.js)
   const fbText = createFacebookMessage(data);
+
+  // 2. Link für den Kommentar extrahieren
+  let offerUrl = data.affiliate_url || data.url || "";
+  if (offerUrl === "N/A" || offerUrl === "null") offerUrl = "";
 
   // Payload bauen
   let payload = {
     type: "post",
     text: fbText,
     image: null,
+    comment: offerUrl.trim(), // <--- URL als Kommentar senden
   };
 
   if (localImagePath) {
@@ -74,7 +79,7 @@ async function sendPost(data, localImagePath) {
   });
 
   if (sentCount > 0) {
-    console.log(`[FACEBOOK] 📤 An Extension gesendet.`);
+    console.log(`[FACEBOOK] 📤 Post & Kommentar-Link an Extension gesendet.`);
     return true;
   } else {
     console.log(`[FACEBOOK] ⚠️ Kein Client verbunden.`);
