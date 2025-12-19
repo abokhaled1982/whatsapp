@@ -11,7 +11,7 @@ const waService = require("./whatsapp_service");
 // --- KONFIGURATION ---
 const HOME_DIR = os.homedir();
 const WATCH_FOLDER = path.join(HOME_DIR, "Desktop", "scraper", "data", "out");
-const CHECK_INTERVAL_SECONDS = 30; // Wie oft prüfen wir, wenn nichts los ist?
+const CHECK_INTERVAL_SECONDS = 30; 
 
 // Wartezeit Grenzen (in Sekunden)
 const MIN_WAIT_SECONDS = 250; // 5 Minuten
@@ -21,35 +21,41 @@ const MAX_WAIT_SECONDS = 500; // 10 Minuten
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/**
- * Gibt eine Zufallszahl zwischen MIN und MAX zurück
- */
 function getRandomWaitSeconds() {
   return Math.floor(Math.random() * (MAX_WAIT_SECONDS - MIN_WAIT_SECONDS + 1)) + MIN_WAIT_SECONDS;
 }
 
-/**
- * Formatiert Sekunden in "Xm Ys" für die Konsole
- */
 function formatDuration(seconds) {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
-  return `${m}m ${s}s`; // z.B. "7m 12s"
+  return `${m}m ${s}s`; 
 }
 
 /**
- * Führt das Warten aus und zeigt Countdown/Info an
+ * Zeigt den großen Status-Block nach jedem Deal an
  */
+async function printStatusBlock(current, total, context = "BATCH") {
+  const sentList = await utils.getSentDeals();
+  const totalHistory = sentList.length;
+  const remaining = total - current;
+  const percent = Math.round((current / total) * 100);
+
+  console.log("\n==================================================");
+  console.log(`✅  STATUS-REPORT (${context})`);
+  console.log("==================================================");
+  console.log(`📉  Fortschritt:    ${current} von ${total} erledigt (${percent}%)`);
+  console.log(`🔮  Noch offen:     ${remaining} Deals in der Warteschlange`);
+  console.log(`🌍  Gesamt (Ewig):  ${totalHistory} Deals jemals gesendet`);
+  console.log("==================================================\n");
+}
+
 async function performSafetyWait() {
   const waitTime = getRandomWaitSeconds();
   const formatted = formatDuration(waitTime);
   
-  console.log(`[SAFETY] 🛡️  Sicherheits-Pause: Warte ${formatted} bis zum nächsten Deal...`);
-  
-  // Wir warten hier die volle Zeit
+  console.log(`[SAFETY] 🛡️  Sicherheits-Pause: Warte ${formatted} ...`);
   await sleep(waitTime * 1000);
-  
-  console.log("[SAFETY] 🟢 Pause beendet. Weiter geht's.");
+  console.log("[SAFETY] 🟢 Pause beendet. Nächster Job.");
 }
 
 async function getCandidates() {
@@ -84,9 +90,9 @@ async function runInitPhase() {
 
 // Phase 2: Batch (Alte Dateien abarbeiten)
 async function runBatchPhase() {
-  console.log("2️⃣  [BATCH] Prüfe Rückstand...");
+  console.log("\n2️⃣  [BATCH] Prüfe Rückstand...");
   
-  // Wir holen die Liste immer frisch, falls sich was ändert
+  // Liste holen
   let candidates = await getCandidates();
 
   if (candidates.length === 0) {
@@ -94,26 +100,36 @@ async function runBatchPhase() {
     return;
   }
 
-  console.log(`📦 Found: ${candidates.length} Deals im Rückstand. Arbeite ab...`);
+  const total = candidates.length;
+  console.log(`📦 [START] Starte Abarbeitung von ${total} Deals.`);
   
-  // Wir iterieren manuell, damit wir warten können
-  for (let i = 0; i < candidates.length; i++) {
+  for (let i = 0; i < total; i++) {
     const file = candidates[i];
-    
+    const currentNum = i + 1;
+
     // Verarbeiten
     const wasSent = await processor.processSingleDeal(file);
     
-    // WENN gesendet wurde, DANN warten wir.
-    // Auch beim letzten Element im Batch warten wir, damit wir nicht 
-    // direkt danach im Live-Loop sofort wieder feuern.
+    // WENN ERFOLGREICH -> REPORT ANZEIGEN
     if (wasSent) {
-      await performSafetyWait();
+      await printStatusBlock(currentNum, total, "BATCH");
+      
+      // Wenn nicht der letzte, dann warten
+      if (currentNum < total) {
+         await performSafetyWait();
+      } else {
+         console.log("🏁 [BATCH] Letzter Deal fertig!");
+      }
+    } else {
+      // Wenn er übersprungen/gelöscht wurde (weil ungültig), 
+      // passen wir die Statistik kurz an oder loggen nur klein
+      console.log(`[SKIP] Datei ${path.basename(file)} übersprungen/gelöscht.`);
     }
   }
-  console.log("✅ [BATCH] Rückstand erledigt.");
+  console.log("✅ [BATCH] Rückstand komplett erledigt.");
 }
 
-// Phase 3: Watch Loop (Auf neue warten)
+// Phase 3: Watch Loop (Live neue Dateien)
 async function runWatchLoop() {
   console.log("\n3️⃣  [WATCHER] 👁️  Live-Modus aktiv...");
 
@@ -122,22 +138,27 @@ async function runWatchLoop() {
       const candidates = await getCandidates();
 
       if (candidates.length > 0) {
-        console.log(`[LIVE] 🎯 ${candidates.length} neue Datei(en) entdeckt.`);
+        const totalNew = candidates.length;
+        console.log(`\n[LIVE] 🎯 ${totalNew} neue Datei(en) entdeckt!`);
         
-        for (const file of candidates) {
+        for (let i = 0; i < totalNew; i++) {
+          const file = candidates[i];
+          const currentNum = i + 1;
+
           const wasSent = await processor.processSingleDeal(file);
 
           if (wasSent) {
+            // Auch im Live-Modus den Report zeigen
+            await printStatusBlock(currentNum, totalNew, "LIVE-INPUT");
             await performSafetyWait();
           }
         }
       }
+
     } catch (err) {
       console.error(`[LOOP-ERROR] ${err.message}`);
     }
 
-    // Kurzer Sleep, um CPU zu sparen, wenn KEINE Dateien da sind
-    // Das ist NICHT die Drosselung nach dem Senden, sondern nur "Leerlauf"
     await sleep(CHECK_INTERVAL_SECONDS * 1000);
   }
 }
@@ -145,7 +166,7 @@ async function runWatchLoop() {
 // --- START ---
 async function startSystem() {
   console.log("========================================");
-  console.log("   🚀 DEAL BOT SYSTEM (STABLE WAIT)     ");
+  console.log("   🚀 DEAL BOT SYSTEM (FULL LOGS)       ");
   console.log("========================================");
 
   await runInitPhase();
