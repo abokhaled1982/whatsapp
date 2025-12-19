@@ -25,12 +25,6 @@ function getRandomWaitSeconds() {
   return Math.floor(Math.random() * (MAX_WAIT_SECONDS - MIN_WAIT_SECONDS + 1)) + MIN_WAIT_SECONDS;
 }
 
-function formatDuration(seconds) {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}m ${s}s`; 
-}
-
 /**
  * Zeigt den großen Status-Block nach jedem Deal an
  */
@@ -49,13 +43,37 @@ async function printStatusBlock(current, total, context = "BATCH") {
   console.log("==================================================\n");
 }
 
+/**
+ * NEU: Live Countdown in einer Zeile
+ */
 async function performSafetyWait() {
-  const waitTime = getRandomWaitSeconds();
-  const formatted = formatDuration(waitTime);
+  const waitSeconds = getRandomWaitSeconds();
+  const startTime = new Date(); // Zeitpunkt "Jetzt" (letztes Senden)
+  const lastSentTimeStr = startTime.toLocaleTimeString("de-DE"); // z.B. 14:30:15
   
-  console.log(`[SAFETY] 🛡️  Sicherheits-Pause: Warte ${formatted} ...`);
-  await sleep(waitTime * 1000);
-  console.log("[SAFETY] 🟢 Pause beendet. Nächster Job.");
+  let remaining = waitSeconds;
+
+  // Cursor verstecken (macht es sauberer)
+  process.stdout.write("\x1B[?25l");
+
+  while (remaining > 0) {
+    const m = Math.floor(remaining / 60);
+    const s = remaining % 60;
+    
+    // Formatierung 00:00
+    const mStr = String(m).padStart(2, '0');
+    const sStr = String(s).padStart(2, '0');
+
+    // \r springt an den Anfang der Zeile zurück und überschreibt
+    process.stdout.write(`\r⏳ Letzter Deal: ${lastSentTimeStr} Uhr | Nächster Start in: [ ${mStr}:${sStr} ] `);
+
+    await sleep(1000); // 1 Sekunde warten
+    remaining--;
+  }
+
+  // Cursor wieder anzeigen und neue Zeile
+  process.stdout.write("\x1B[?25h");
+  console.log("\n\n[SAFETY] 🟢 Pause beendet. Suche nach neuen Deals...");
 }
 
 async function getCandidates() {
@@ -121,8 +139,6 @@ async function runBatchPhase() {
          console.log("🏁 [BATCH] Letzter Deal fertig!");
       }
     } else {
-      // Wenn er übersprungen/gelöscht wurde (weil ungültig), 
-      // passen wir die Statistik kurz an oder loggen nur klein
       console.log(`[SKIP] Datei ${path.basename(file)} übersprungen/gelöscht.`);
     }
   }
@@ -166,7 +182,7 @@ async function runWatchLoop() {
 // --- START ---
 async function startSystem() {
   console.log("========================================");
-  console.log("   🚀 DEAL BOT SYSTEM (FULL LOGS)       ");
+  console.log("   🚀 DEAL BOT SYSTEM (LIVE TIMER)      ");
   console.log("========================================");
 
   await runInitPhase();
